@@ -7,8 +7,12 @@ import numpy as np
 
 class scopish:
 	def __init__(self, soapy_args, rate, channel=0, bufsize=1024):
+        soapy_args_list = SoapySDR.Device.enumerate(soapy_args)
+        if len(soapy_args_list > 1):
+            raise Exception('more than one device matches', soapy_args, *soapy_args_list)
+        self.device_args = soapy_args_list[0]
 		self.channel = channel
-		self.device = SoapySDR.Device(soapy_args)
+		self.device = SoapySDR.Device(self.device_args)
 		print(self.device.getGainRange(SOAPY_SDR_RX, channel))
 		print(self.device.hasGainMode(SOAPY_SDR_RX, channel))
 		self.device.writeSetting('direct_samp', '2')
@@ -25,6 +29,9 @@ class scopish:
 	@property
 	def gain(self):
 		return self.device.getGain(SOAPY_SDR_RX, self.channel)
+    @property
+    def frequency(self):
+        return self.device.getFrequency(SOAPY_SDR_RX, self.channel)
 	@gain.setter
 	def gain(self, gain):
 		self.device.setGain(SOAPY_SDR_RX, self.channel, gain)
@@ -33,7 +40,8 @@ class scopish:
     def metadata(self):
         return dict(
             driver_key = self.device.getDriverKey(),
-            hardware_key = self.device.getHardwareKey()
+            hardware_key = self.device.getHardwareKey(),
+            device_args = self.device_args,
             hardware_info = dict(self.device.getHardwareInfo()),
             settings = {s.key:s.value for s in self.device.getSettingInfo()},
             stream_args = self.stream_args,
@@ -160,7 +168,7 @@ class Loop:
 	def start(self):
 		self.running = True
         metadata = self.source.metadata
-		dataitem = self.dataset.create('example', **metadata)
+		dataitem = self.dataset.create(f'{self.source.channel}-{self.frequency}-{time.time()}', **metadata)
 		while self.running:
             print('WARNING: expecting dropped data in undesigned recv loop')
 			data = self.source.recv()
