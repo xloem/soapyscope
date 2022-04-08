@@ -5,17 +5,21 @@ from SoapySDR import SOAPY_SDR_RX, SOAPY_SDR_CF32
 
 import numpy as np
 
+# this class ended up wrapping soapy.device
+# with purpose of abstracting live stream
+# it could possibly be removed
 class scopish:
 	def __init__(self, soapy_args, rate, channel=0, bufsize=1024):
-        soapy_args_list = SoapySDR.Device.enumerate(soapy_args)
-        if len(soapy_args_list > 1):
-            raise Exception('more than one device matches', soapy_args, *soapy_args_list)
-        self.device_args = soapy_args_list[0]
+		soapy_args_list = SoapySDR.Device.enumerate(soapy_args)
+		if len(soapy_args_list) > 1:
+			raise Exception('more than one device matches', soapy_args, *soapy_args_list)
+		self.device_args = soapy_args_list[0]
 		self.channel = channel
 		self.device = SoapySDR.Device(self.device_args)
 		print(self.device.getGainRange(SOAPY_SDR_RX, channel))
 		print(self.device.hasGainMode(SOAPY_SDR_RX, channel))
-		self.device.writeSetting('direct_samp', '2')
+		#self.device.writeSetting('direct_samp', '2')
+		self.device.writeSetting('testmode', 'true')
 		self.device.setSampleRate(SOAPY_SDR_RX, self.channel, rate)
 
 		#self.device.setFrequency(SOAPY_SDR_RX, self.channel, 100000000)
@@ -24,29 +28,35 @@ class scopish:
 		#self.device.setGain(SOAPY_SDR_RX, self.channel, 0)
 
 		self.buf = np.zeros(bufsize, np.complex64)
-        self.stream_args = [SOAPY_SDR_RX, SOAPY_SDR_CF32, [self.channel]]
+		self.stream_args = [SOAPY_SDR_RX, SOAPY_SDR_CF32, [self.channel]]
 		self.stream = self.device.setupStream(*self.stream_args)
+	def test_mode(self, enable):
+		self.device.writeSetting('testmode', 'true' if enable else 'false')
+	def direct_sampling(self, num):
+		if not num:
+			num = 0
+		self.device.writeSetting('direct_samp', str(num))
 	@property
 	def gain(self):
 		return self.device.getGain(SOAPY_SDR_RX, self.channel)
-    @property
-    def frequency(self):
-        return self.device.getFrequency(SOAPY_SDR_RX, self.channel)
+	@property
+	def frequency(self):
+		return self.device.getFrequency(SOAPY_SDR_RX, self.channel)
 	@gain.setter
 	def gain(self, gain):
 		self.device.setGain(SOAPY_SDR_RX, self.channel, gain)
 		print('gain', gain, '->', self.gain)
-    @property
-    def metadata(self):
-        return dict(
-            driver_key = self.device.getDriverKey(),
-            hardware_key = self.device.getHardwareKey(),
-            device_args = self.device_args,
-            hardware_info = dict(self.device.getHardwareInfo()),
-            settings = {s.key:s.value for s in self.device.getSettingInfo()},
-            stream_args = self.stream_args,
-            stream_args_info = {s.key:s.value for s in self.device.getStreamArgsInfo(self.stream_args[[0], self.stream_args[2][0])}
-        )
+	@property
+	def metadata(self):
+		return dict(
+			driver_key = self.device.getDriverKey(),
+			hardware_key = self.device.getHardwareKey(),
+			device_args = self.device_args,
+			hardware_info = dict(self.device.getHardwareInfo()),
+			settings = {s.key:s.value for s in self.device.getSettingInfo()},
+			stream_args = self.stream_args,
+			stream_args_info = {s.key:s.value for s in self.device.getStreamArgsInfo(SOAPY_SDR_RX, self.channel)}
+		)
 	def __enter__(self):
 		self.device.activateStream(self.stream)
 		return self.recv
@@ -167,10 +177,10 @@ class Loop:
 		self.dataset = dataset
 	def start(self):
 		self.running = True
-        metadata = self.source.metadata
+		metadata = self.source.metadata
 		dataitem = self.dataset.create(f'{self.source.channel}-{self.frequency}-{time.time()}', **metadata)
 		while self.running:
-            print('WARNING: expecting dropped data in undesigned recv loop')
+			print('WARNING: expecting dropped data in undesigned recv loop')
 			data = self.source.recv()
 			dataitem.write(data)
 	def stop(self):
@@ -195,16 +205,23 @@ class sigeventpair:
 		
 
 if __name__ == '__main__':
-	ch = display()
-	while True:
-		with ch:
-			ch.pixels[16] = 0x00FF00
-		ch.update()
-	#scop = scopish('', rate=2048000, bufsize=1024*1024*64)
+	#ch = display()
+	#while True:
+	#	with ch:
+	#		ch.pixels[16] = 0x00FF00
+	#	ch.update()
+	scop = scopish('driver=rtlsdr,testmode=true', rate=2048000, bufsize=1024*1024*64)
+	scop.test_mode = True
 	#last = None
-	#with scop as recv:
-	#	while True:
-	#		data = recv()
+	last_num = 0
+	with scop as recv:
+		while True:
+			data = recv().view(dtype=np.float32)
+			data = (data * 128 + 127.4).astype(int)
+			dropped = (data[1:] - data[:-1]).max() - 1
+			print(dropped, 'dropped mid-chunk')
+			print(data[0] - last_num - 1, 'dropped inter-chunk')
+			last_num = data[-1]
 	#		val = data.mean()
 	#		if val != last:
 	#			print(val)
