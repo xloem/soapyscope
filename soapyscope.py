@@ -20,7 +20,8 @@ class scopish:
 		#self.device.setGain(SOAPY_SDR_RX, self.channel, 0)
 
 		self.buf = np.zeros(bufsize, np.complex64)
-		self.stream = self.device.setupStream(SOAPY_SDR_RX, SOAPY_SDR_CF32, [self.channel])
+        self.stream_args = [SOAPY_SDR_RX, SOAPY_SDR_CF32, [self.channel]]
+		self.stream = self.device.setupStream(*self.stream_args)
 	@property
 	def gain(self):
 		return self.device.getGain(SOAPY_SDR_RX, self.channel)
@@ -28,6 +29,16 @@ class scopish:
 	def gain(self, gain):
 		self.device.setGain(SOAPY_SDR_RX, self.channel, gain)
 		print('gain', gain, '->', self.gain)
+    @property
+    def metadata(self):
+        return dict(
+            driver_key = self.device.getDriverKey(),
+            hardware_key = self.device.getHardwareKey()
+            hardware_info = dict(self.device.getHardwareInfo()),
+            settings = {s.key:s.value for s in self.device.getSettingInfo()},
+            stream_args = self.stream_args,
+            stream_args_info = {s.key:s.value for s in self.device.getStreamArgsInfo(self.stream_args[[0], self.stream_args[2][0])}
+        )
 	def __enter__(self):
 		self.device.activateStream(self.stream)
 		return self.recv
@@ -148,8 +159,10 @@ class Loop:
 		self.dataset = dataset
 	def start(self):
 		self.running = True
-		dataitem = self.dataset.create('example')
+        metadata = self.source.metadata
+		dataitem = self.dataset.create('example', **metadata)
 		while self.running:
+            print('WARNING: expecting dropped data in undesigned recv loop')
 			data = self.source.recv()
 			dataitem.write(data)
 	def stop(self):
