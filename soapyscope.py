@@ -67,12 +67,12 @@ class scopish:
 		if status.ret < 0:
 			raise Exception(SoapySDR.errToStr(status.ret))
 		return self.buf[:status.ret]#
-	def start(self):
-		self.running = True
-		while self.running:
-			data = self.recv()
-	def stop(self):
-		self.running = False
+	#def start(self):
+	#	self.running = True
+	#	while self.running:
+	#		data = self.recv()
+	#def stop(self):
+	#	self.running = False
 
 import sdl2.ext, os, ctypes
 class display:
@@ -108,6 +108,8 @@ class display:
 	def __del__(self):
 		sdl2.ext.quit()
 
+	#def draw_dataset(self, dataset):
+
 
 import os
 class dir_dataset:
@@ -115,12 +117,20 @@ class dir_dataset:
 		self.name = name
 		self.path = os.path.join(os.path.abspath('.'), name)
 		os.makedirs(self.path, exist_ok=True)
+		self.maxlength = 0
+		for item in self.items():
+			self.maxlength = max(self.maxlength, item.length)
 	def create(self, itemname, **metadata):
 		item = dir_dataset.item(self, itemname)
 		item.metadata = metadata
 		return item
 	def load(self, itemname):
 		return dir_dataset.item(self, itemname)
+	def list(self):
+		return [fn[:-4] for fn in os.listdir(self.path) if fn.endswith('.c64')]
+	def items(self):
+		for item in self.list():
+			yield self.load(item)
 	class item:
 		def __init__(self, dataset, name):
 			self.dataset = dataset
@@ -147,6 +157,8 @@ class dir_dataset:
 			assert self.bin_file.tell() == self.size_bytes
 			assert data.dtype is np.complex64
 			self.bin_file.write(data.data)
+			self.size_bytes += len(data.data)
+			self.dataset.maxlength = max(self.length, self.dataset.maxlength)
 		def read(self, offset=0, size=None):
 			if size is None:
 				size_bytes = self.size_bytes
@@ -175,23 +187,36 @@ class Loop:
 	def __init__(self, scopish, dataset):
 		self.source = scopish
 		self.dataset = dataset
+		self.regions = set()
+	# instead of start/stop being per-window
+	# just run start, and call functions
+	# to mark a section and complete the section
 	def start(self):
 		self.running = True
 		metadata = self.source.metadata
 		dataitem = self.dataset.create(f'{self.source.channel}-{self.frequency}-{time.time()}', **metadata)
 		while self.running:
-			print('WARNING: expecting dropped data in undesigned recv loop')
+			#print('WARNING: expecting dropped data in undesigned recv loop')
 			data = self.source.recv()
-			dataitem.write(data)
+			for region in self.regions:
+				region.write(data)
 	def stop(self):
 		self.running = False
-
+	def start_region(self, name):
+		assert self.running
+		metadata = self.source.metadata
+		dataitem = self.dataset.create(f'{self.source.channel}-{self.frequency}-{time.time()}', **metadata)
+		self.regions.add(dataitem)
+		return dataitem
+	def finish_region(self, region):
+		self.regions.remove(region)
 import signal
 class sigeventpair:
 	def __init__(self, loop, start_signum = signal.SIGUSR1, stop_signum = signal.SIGUSR2):
 		self.start_signum = start_signum
 		self.stop_signum = stop_signum
 		self.loop = loop
+		self.region = None
 	def __enter__(self):
 		self._old_start = signal.signal(self.start_signum, self.on_start)
 		self._old_stop = signal.signal(self.stop_signum, self.on_stop)
@@ -199,9 +224,14 @@ class sigeventpair:
 		signal.signal(self.start_signum, self._old_start)
 		signal.signal(self.stop_signum, self._old_stop)
 	def on_start(self, signum, frame):
-		self.loop.start()
+		if self.region is not None:
+			raise Exception('double start signal')
+		self.region = self.loop.start_region()
 	def on_stop(self, signum, frame):
-		self.loop.stop()
+		if self.region is None:
+			raise Exception('unexpected end signal')
+		self.loop.stop_region(self.region)
+		self.region = None
 		
 
 if __name__ == '__main__':
@@ -211,8 +241,11 @@ if __name__ == '__main__':
 	#		ch.pixels[16] = 0x00FF00
 	#	ch.update()
 	scop = scopish('driver=rtlsdr,testmode=true', rate=2048000, bufsize=1024*1024*64)
+
+	loop = Loop()
+	sigs = sigeventpair(loop)
+
 	scop.test_mode = True
-	#last = None
 	last_num = 0
 	with scop as recv:
 		while True:
@@ -222,6 +255,7 @@ if __name__ == '__main__':
 			print(dropped, 'dropped mid-chunk')
 			print(data[0] - last_num - 1, 'dropped inter-chunk')
 			last_num = data[-1]
+
 	#		val = data.mean()
 	#		if val != last:
 	#			print(val)
