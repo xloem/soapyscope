@@ -67,12 +67,12 @@ class scopish:
 		if status.ret < 0:
 			raise Exception(SoapySDR.errToStr(status.ret))
 		return self.buf[:status.ret]#
-	#def start(self):
-	#	self.running = True
-	#	while self.running:
-	#		data = self.recv()
-	#def stop(self):
-	#	self.running = False
+	def start(self):
+		self.running = True
+		while self.running:
+			data = self.recv()
+	def stop(self):
+		self.running = False
 
 import sdl2.ext, os, ctypes
 class display:
@@ -82,20 +82,28 @@ class display:
 		sdl2.ext.init()
 		self.window = sdl2.SDL_CreateWindow(b'Hello, world!', sdl2.SDL_WINDOWPOS_CENTERED, sdl2.SDL_WINDOWPOS_CENTERED, 800, 600, sdl2.SDL_WINDOW_SHOWN | sdl2.SDL_WINDOW_MAXIMIZED)
 		self.renderer = sdl2.SDL_CreateRenderer(self.window, -1, sdl2.SDL_RENDERER_ACCELERATED)
-		self.texture = sdl2.SDL_CreateTexture(self.renderer, sdl2.SDL_PIXELFORMAT_RGB888, sdl2.SDL_TEXTUREACCESS_STREAMING, *self.size)
+		self.tex_width, self.tex_height = self.size
+		self.texture = sdl2.SDL_CreateTexture(self.renderer, sdl2.SDL_PIXELFORMAT_RGB888, sdl2.SDL_TEXTUREACCESS_STREAMING, self.tex_width, self.tex_height)
+		self.max_tex_length = 1024*1024*1024
+		self.max_tex_height = 1024*1024*1024
 	@property
 	def size(self):
 		w, h = ctypes.c_int(), ctypes.c_int()
 		sdl2.SDL_GetRendererOutputSize(self.renderer, ctypes.byref(w), ctypes.byref(h))
 		return w.value, h.value	
 	def __enter__(self):
+		self.lockpixels()
+	def lockpixels(self):
 		pixels = ctypes.c_void_p()
 		pitch = ctypes.c_int()
 		sdl2.SDL_LockTexture(self.texture, ctypes.cast(0, ctypes.POINTER(sdl2.SDL_Rect)), ctypes.byref(pixels), ctypes.byref(pitch))
 		self.pixels = ctypes.cast(pixels, ctypes.POINTER(ctypes.c_int))
 		self.pitch = pitch.value // 4
 	def __exit__(self, *params):
+		self.unlockpixels()
+	def unlockpixels(self):
 		sdl2.SDL_UnlockTexture(self.texture)
+		self.pixels = None
 	def update(self):
 		events = sdl2.ext.get_events()
 		for event in events:
@@ -103,13 +111,71 @@ class display:
 				raise Exception('SDL_QUIT')
 		#for x in range(self.size[1] * pitch.value // 4 // 2):
 		#	pixels[x] = 0xff#ffffff
-		sdl2.SDL_RenderCopy(self.renderer, self.texture, ctypes.cast(0, ctypes.POINTER(sdl2.SDL_Rect)), ctypes.cast(0, ctypes.POINTER(sdl2.SDL_Rect)))
 		sdl2.SDL_RenderPresent(self.renderer)
+	def render(self, x = 0, y = 0, w = None, h = None):
+		if w is None or h is None:
+			size = self.size
+		o_rect = sdl2.SDL_Rect(x, y, size[0] if w is None else w, size[1] if h is None else h)
+		sdl2.SDL_RenderCopy(self.renderer, self.texture, ctypes.cast(0, ctypes.POINTER(sdl2.SDL_Rect)), o_rect)#ctypes.cast(0, ctypes.POINTER(sdl2.SDL_Rect)))
 	def __del__(self):
 		sdl2.ext.quit()
 
-	#def draw_dataset(self, dataset):
+	def draw_dataset(self, dataset):
+		width, height = self.size
+		itemnames = dataset.list()[:height]
+		maxlength = dataset.maxlength
+		texlength = min(maxlength, self.max_tex_length)
+		texheight = min(len(itemnames), self.max_tex_height)
+		if self.tex_width != texlength or self.tex_height != texheight:
+			while True:
+				try:
+					self.tex_width = texlength
+					self.tex_height = texheight
+					self.texture = sdl2.SDL_CreateTexture(self.renderer, sdl2.SDL_PIXELFORMAT_RGB888, sdl2.SDL_TEXTUREACCESS_STREAMING, self.tex_width, self.tex_height)
+					break
+				except:
+					if self.tex_height > 1:
+						self.tex_height //= 2
+						self.max_text_height = self.tex_height
+						texheight = self.tex_height
+						continue
+					if self.tex_width == self.max_tex_length:
+						self.max_tex_length //= 2
+						self.tex_width = self.max_tex_length
+						texlength = self.max_tex_length
+						continue
+					raise
+		# texture is of texlength x texheight
+		# first 1d is tiled by texlength for each row
+		# then 2d is tiled by texheight using groups of rows
+		#todotodo below here
+		row = 0
+		while row < self.height:
+			startrow = row
+			with self:
+				pxoff = 0
+				for texrow in range(self.tex_height):
+					item = dataset.item(itemnames[row])
+					texcol = 0
+					while txcol < len(item):
+						c64data = item.read(self.tex_width)
+			#pxoff = self.pitch * row
+			#pxdata = self.pixels[pxoff:pxoff+len(c64data)]
+			#dstwidth = int(len(c64data) * width / maxlength + 0.5)
+						tail = texcol + len(c64data)
+						self.pixels[pxoff + texcol:pxoff + tail] = c64data.real * 0xff + c64dat.imag * 0xff00
+						texcol = tail
+					pxoff += self.pitch
+					row += 1
+					if row >= self.height:
+						break
+			self.render(0, startrow, None, self.tex_height) 
+			# scale
+			# scaling basically means writing to another texture, and then drawing that texture.
+			# but we can draw straight to the renderer
 
+			# data is c64
+			
 
 import os
 class dir_dataset:
@@ -191,7 +257,7 @@ class Loop:
 	# instead of start/stop being per-window
 	# just run start, and call functions
 	# to mark a section and complete the section
-	def start(self):
+	def start(self, gui = None):
 		self.running = True
 		metadata = self.source.metadata
 		dataitem = self.dataset.create(f'{self.source.channel}-{self.frequency}-{time.time()}', **metadata)
@@ -200,6 +266,9 @@ class Loop:
 			data = self.source.recv()
 			for region in self.regions:
 				region.write(data)
+			if gui is not None:
+				gui.draw_dataset(dataset)
+				gui.update()
 	def stop(self):
 		self.running = False
 	def start_region(self, name):
@@ -241,20 +310,23 @@ if __name__ == '__main__':
 	#		ch.pixels[16] = 0x00FF00
 	#	ch.update()
 	scop = scopish('driver=rtlsdr,testmode=true', rate=2048000, bufsize=1024*1024*64)
+	dataset = dir_dataset('test')
+	gui = display()
 
-	loop = Loop()
+	loop = Loop(scop, dataset)
 	sigs = sigeventpair(loop)
+	loop.start(gui)
 
-	scop.test_mode = True
-	last_num = 0
-	with scop as recv:
-		while True:
-			data = recv().view(dtype=np.float32)
-			data = (data * 128 + 127.4).astype(int)
-			dropped = (data[1:] - data[:-1]).max() - 1
-			print(dropped, 'dropped mid-chunk')
-			print(data[0] - last_num - 1, 'dropped inter-chunk')
-			last_num = data[-1]
+	#scop.test_mode = True
+	#last_num = 0
+	#with scop as recv:
+	#	while True:
+	#		data = recv().view(dtype=np.float32)
+	#		data = (data * 128 + 127.4).astype(int)
+	#		dropped = (data[1:] - data[:-1]).max() - 1
+	#		print(dropped, 'dropped mid-chunk')
+	#		print(data[0] - last_num - 1, 'dropped inter-chunk')
+	#		last_num = data[-1]
 
 	#		val = data.mean()
 	#		if val != last:
