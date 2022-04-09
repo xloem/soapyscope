@@ -3,6 +3,8 @@
 import SoapySDR
 from SoapySDR import SOAPY_SDR_RX, SOAPY_SDR_CF32
 
+import time
+import json
 import numpy as np
 
 # this class ended up wrapping soapy.device
@@ -13,7 +15,7 @@ class scopish:
 		soapy_args_list = SoapySDR.Device.enumerate(soapy_args)
 		if len(soapy_args_list) > 1:
 			raise Exception('more than one device matches', soapy_args, *soapy_args_list)
-		self.device_args = soapy_args_list[0]
+		self.device_args = {**soapy_args_list[0]}
 		self.channel = channel
 		self.device = SoapySDR.Device(self.device_args)
 		print(self.device.getGainRange(SOAPY_SDR_RX, channel))
@@ -77,9 +79,14 @@ class scopish:
 import sdl2.ext, os, ctypes
 class display:
 	def __init__(self):
-		if 'DISPLAY' not in os.environ:
-			os.environ['DISPLAY'] = ':0'
-		sdl2.ext.init()
+		for DISPLAY in (None, ':0', ':1'):
+			try:
+				if DISPLAY is not None:
+					os.environ['DISPLAY'] = DISPLAY
+				sdl2.ext.init()
+				break
+			except:
+				pass
 		self.window = sdl2.SDL_CreateWindow(b'Hello, world!', sdl2.SDL_WINDOWPOS_CENTERED, sdl2.SDL_WINDOWPOS_CENTERED, 800, 600, sdl2.SDL_WINDOW_SHOWN | sdl2.SDL_WINDOW_MAXIMIZED)
 		self.renderer = sdl2.SDL_CreateRenderer(self.window, -1, sdl2.SDL_RENDERER_ACCELERATED)
 		self.tex_width, self.tex_height = self.size
@@ -204,7 +211,11 @@ class dir_dataset:
 			self.prefix = os.path.join(self.dataset.path, self.name)
 			self.bin_path = self.prefix + '.c64'
 			self.metadata_path = self.prefix + '.json'
-			self.bin_file = open(self.bin_path, 'r+b')
+			try:
+				self.bin_file = open(self.bin_path, 'x+b')
+			except FileExistsError:
+				# feel free to change to r+b to append
+				self.bin_file = open(self.bin_path, 'rb')
 			self.size_bytes = self.bin_file.seek(0, 2)
 			self.bin_file.seek(0, 0)
 		@property
@@ -212,7 +223,7 @@ class dir_dataset:
 			with open(self.metadata_path, 'rt') as metadata_file:
 				return json.load(metadata_file)
 		@metadata.setter
-		def write_metadata(self, metadata):
+		def metadata(self, metadata):
 			assert not os.path.exists(self.metadata_path)
 			with open(self.metadata_path, 'wt') as metadata_file:
 				json.dump(metadata, metadata_file)
@@ -260,7 +271,7 @@ class Loop:
 	def start(self, gui = None):
 		self.running = True
 		metadata = self.source.metadata
-		dataitem = self.dataset.create(f'{self.source.channel}-{self.frequency}-{time.time()}', **metadata)
+		dataitem = self.dataset.create(f'{self.source.channel}-{self.source.frequency}-{time.time()}', **metadata)
 		while self.running:
 			#print('WARNING: expecting dropped data in undesigned recv loop')
 			data = self.source.recv()
