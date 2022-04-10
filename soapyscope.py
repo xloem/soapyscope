@@ -268,10 +268,12 @@ class Loop:
 	# instead of start/stop being per-window
 	# just run start, and call functions
 	# to mark a section and complete the section
-	def start(self, gui = None):
+	def start(self, gui = None, test = False):
+        self.source.test_mode = test
 		self.running = True
-		metadata = self.source.metadata
-		dataitem = self.dataset.create(f'{self.source.channel}-{self.source.frequency}-{time.time()}', **metadata)
+		#metadata = self.source.metadata
+		#dataitem = self.dataset.create(f'{self.source.channel}-{self.source.frequency}-{time.time()}', **metadata)
+        last_num = 0
 		while self.running:
 			#print('WARNING: expecting dropped data in undesigned recv loop')
 			data = self.source.recv()
@@ -280,12 +282,20 @@ class Loop:
 			if gui is not None:
 				gui.draw_dataset(dataset)
 				gui.update()
+            if test:
+                data = data.view(dtype=no.float32)
+                data = (data * 128 + 127.4).astype(int)
+                dropped = (data[1:] - data[:-1]).max() - 1
+                print(dropped, 'dropped mid-chunk')
+                print(data[0] - last_num - 1, 'dropped inter-chunk')
+                last_num = data[:-1]
 	def stop(self):
 		self.running = False
 	def start_region(self, name):
 		assert self.running
 		metadata = self.source.metadata
-		dataitem = self.dataset.create(f'{self.source.channel}-{self.frequency}-{time.time()}', **metadata)
+		dataitem = self.dataset.create(f'{self.source.channel}-{self.source.frequency}-{time.time()}', **metadata)
+		#dataitem = self.dataset.create(f'{self.source.channel}-{self.frequency}-{time.time()}', **metadata)
 		self.regions.add(dataitem)
 		return dataitem
 	def finish_region(self, region):
@@ -326,7 +336,7 @@ if __name__ == '__main__':
 
 	loop = Loop(scop, dataset)
 	sigs = sigeventpair(loop)
-	loop.start(gui)
+	loop.start(gui, test = True)
 
 	#scop.test_mode = True
 	#last_num = 0
