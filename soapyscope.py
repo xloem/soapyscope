@@ -177,7 +177,7 @@ class display:
 			#pxdata = self.pixels[pxoff:pxoff+len(c64data)]
 			#dstwidth = int(len(c64data) * width / maxlength + 0.5)
 						tail = texcol + len(c64data)
-						self.pixels[pxoff + texcol:pxoff + tail] = c64data.real * 0xff + c64dat.imag * 0xff00
+						self.pixels[pxoff + texcol:pxoff + tail] = c64data.real * 0xff + c64data.imag * 0xff00
 						texcol = tail
 					pxoff += self.pitch
 					row += 1
@@ -237,7 +237,7 @@ class dir_dataset:
 			return self.size_bytes // 8
 		def write(self, data):
 			assert self.bin_file.tell() == self.size_bytes
-			assert data.dtype is np.complex64
+			assert data.dtype == np.complex64
 			self.bin_file.write(data.data)
 			self.size_bytes += len(data.data)
 			self.dataset.maxlength = max(self.length, self.dataset.maxlength)
@@ -300,7 +300,7 @@ class Loop:
 	def start_region(self, name):
 		assert self.running
 		metadata = self.source.metadata
-		dataitem = self.dataset.create(f'{self.source.channel}-{self.source.frequency}-{time.time()}', **metadata)
+		dataitem = self.dataset.create(f'{name}-{self.source.channel}-{self.source.frequency}-{time.time()}', **metadata)
 		#dataitem = self.dataset.create(f'{self.source.channel}-{self.frequency}-{time.time()}', **metadata)
 		self.regions.add(dataitem)
 		return dataitem
@@ -308,10 +308,11 @@ class Loop:
 		self.regions.remove(region)
 import signal
 class sigeventpair:
-	def __init__(self, loop, start_signum = signal.SIGUSR1, stop_signum = signal.SIGUSR2):
+	def __init__(self, loop, name, start_signum = signal.SIGUSR1, stop_signum = signal.SIGUSR2):
 		self.start_signum = start_signum
 		self.stop_signum = stop_signum
 		self.loop = loop
+		self.name = name
 		self.region = None
 	def __enter__(self):
 		self._old_start = signal.signal(self.start_signum, self.on_start)
@@ -322,11 +323,11 @@ class sigeventpair:
 	def on_start(self, signum, frame):
 		if self.region is not None:
 			raise Exception('double start signal')
-		self.region = self.loop.start_region()
+		self.region = self.loop.start_region(self.name)
 	def on_stop(self, signum, frame):
 		if self.region is None:
 			raise Exception('unexpected end signal')
-		self.loop.stop_region(self.region)
+		self.loop.finish_region(self.region)
 		self.region = None
 		
 
@@ -341,8 +342,9 @@ if __name__ == '__main__':
 	gui = display()
 
 	loop = Loop(scop, dataset)
-	sigs = sigeventpair(loop)
-	loop.start(gui, test = False)#True)
+	sigs = sigeventpair(loop, 'test')
+	with sigs:
+		loop.start(gui, test = False)#True)
 
 	#scop.test_mode = True
 	#last_num = 0
