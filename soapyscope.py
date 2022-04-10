@@ -91,8 +91,10 @@ class display:
 		self.renderer = sdl2.SDL_CreateRenderer(self.window, -1, sdl2.SDL_RENDERER_ACCELERATED)
 		self.tex_width, self.tex_height = self.size
 		self.texture = sdl2.SDL_CreateTexture(self.renderer, sdl2.SDL_PIXELFORMAT_RGB888, sdl2.SDL_TEXTUREACCESS_STREAMING, self.tex_width, self.tex_height)
-		self.max_tex_length = 1024*1024*1024
-		self.max_tex_height = 1024*1024*1024
+		if not self.texture:
+			raise Exception(sdl2.SDL_GetError())
+		self.max_tex_length = 16384
+		self.max_tex_height = 16384
 	@property
 	def size(self):
 		w, h = ctypes.c_int(), ctypes.c_int()
@@ -103,7 +105,9 @@ class display:
 	def lockpixels(self):
 		pixels = ctypes.c_void_p()
 		pitch = ctypes.c_int()
-		sdl2.SDL_LockTexture(self.texture, ctypes.cast(0, ctypes.POINTER(sdl2.SDL_Rect)), ctypes.byref(pixels), ctypes.byref(pitch))
+		result = sdl2.SDL_LockTexture(self.texture, ctypes.cast(0, ctypes.POINTER(sdl2.SDL_Rect)), ctypes.byref(pixels), ctypes.byref(pitch))
+		if result != 0:
+			raise Exception(sdl2.SDL_GetError())
 		self.pixels = ctypes.cast(pixels, ctypes.POINTER(ctypes.c_int))
 		self.pitch = pitch.value // 4
 	def __exit__(self, *params):
@@ -139,6 +143,8 @@ class display:
 					self.tex_width = texlength
 					self.tex_height = texheight
 					self.texture = sdl2.SDL_CreateTexture(self.renderer, sdl2.SDL_PIXELFORMAT_RGB888, sdl2.SDL_TEXTUREACCESS_STREAMING, self.tex_width, self.tex_height)
+					if not self.texture:
+						raise Exception(sdl2.SDL_GetError())
 					break
 				except:
 					if self.tex_height > 1:
@@ -181,7 +187,7 @@ class display:
 						texcol = tail
 					pxoff += self.pitch
 					row += 1
-			self.render(0, startrow, None, self.tex_height) 
+				self.render(0, startrow, None, self.tex_height) 
 			# scale
 			# scaling basically means writing to another texture, and then drawing that texture.
 			# but we can draw straight to the renderer
