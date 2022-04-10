@@ -157,14 +157,21 @@ class display:
 		# then 2d is tiled by texheight using groups of rows
 		#todotodo below here
 		row = 0
-		while row < self.height:
+		while row < height and row < len(itemnames):
 			startrow = row
 			with self:
 				pxoff = 0
 				for texrow in range(self.tex_height):
-					item = dataset.item(itemnames[row])
+					while True:
+						if row >= height or row >= len(itemnames):
+							break
+						item = dataset.load(itemnames[row])
+						if item.length == 0:
+							row += 1
+						else:
+							break
 					texcol = 0
-					while txcol < len(item):
+					while texcol < len(item):
 						c64data = item.read(self.tex_width)
 			#pxoff = self.pitch * row
 			#pxdata = self.pixels[pxoff:pxoff+len(c64data)]
@@ -174,8 +181,6 @@ class display:
 						texcol = tail
 					pxoff += self.pitch
 					row += 1
-					if row >= self.height:
-						break
 			self.render(0, startrow, None, self.tex_height) 
 			# scale
 			# scaling basically means writing to another texture, and then drawing that texture.
@@ -229,7 +234,7 @@ class dir_dataset:
 				json.dump(metadata, metadata_file)
 		@property
 		def length(self):
-			return self.size_bytes / 8
+			return self.size_bytes // 8
 		def write(self, data):
 			assert self.bin_file.tell() == self.size_bytes
 			assert data.dtype is np.complex64
@@ -269,26 +274,27 @@ class Loop:
 	# just run start, and call functions
 	# to mark a section and complete the section
 	def start(self, gui = None, test = False):
-        self.source.test_mode = test
+		self.source.test_mode = test
 		self.running = True
 		#metadata = self.source.metadata
 		#dataitem = self.dataset.create(f'{self.source.channel}-{self.source.frequency}-{time.time()}', **metadata)
-        last_num = 0
-		while self.running:
-			#print('WARNING: expecting dropped data in undesigned recv loop')
-			data = self.source.recv()
-			for region in self.regions:
-				region.write(data)
-			if gui is not None:
-				gui.draw_dataset(dataset)
-				gui.update()
-            if test:
-                data = data.view(dtype=no.float32)
-                data = (data * 128 + 127.4).astype(int)
-                dropped = (data[1:] - data[:-1]).max() - 1
-                print(dropped, 'dropped mid-chunk')
-                print(data[0] - last_num - 1, 'dropped inter-chunk')
-                last_num = data[:-1]
+		last_num = 0
+		with self.source as recv:
+			while self.running:
+				#print('WARNING: expecting dropped data in undesigned recv loop')
+				data = recv()
+				for region in self.regions:
+					region.write(data)
+				if gui is not None:
+					gui.draw_dataset(dataset)
+					gui.update()
+				if test:
+					data = data.view(dtype=np.float32)
+					data = (data * 128 + 127.4).astype(int)
+					dropped = (data[1:] - data[:-1]).max() - 1
+					print(dropped, 'dropped mid-chunk')
+					print(data[0] - last_num - 1, 'dropped inter-chunk')
+					last_num = data[-1]
 	def stop(self):
 		self.running = False
 	def start_region(self, name):
@@ -336,7 +342,7 @@ if __name__ == '__main__':
 
 	loop = Loop(scop, dataset)
 	sigs = sigeventpair(loop)
-	loop.start(gui, test = True)
+	loop.start(gui, test = False)#True)
 
 	#scop.test_mode = True
 	#last_num = 0
