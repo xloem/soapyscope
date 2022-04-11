@@ -93,6 +93,7 @@ class display:
 		self.texture = sdl2.SDL_CreateTexture(self.renderer, sdl2.SDL_PIXELFORMAT_RGB888, sdl2.SDL_TEXTUREACCESS_STREAMING, self.tex_width, self.tex_height)
 		if not self.texture:
 			raise Exception(sdl2.SDL_GetError())
+		self.pixels = None
 		self.max_tex_length = 16384
 		self.max_tex_height = 16384
 	@property
@@ -103,13 +104,14 @@ class display:
 	def __enter__(self):
 		self.lockpixels()
 	def lockpixels(self):
+		assert self.pixels is None
 		pixels = ctypes.c_void_p()
 		pitch = ctypes.c_int()
 		result = sdl2.SDL_LockTexture(self.texture, ctypes.cast(0, ctypes.POINTER(sdl2.SDL_Rect)), ctypes.byref(pixels), ctypes.byref(pitch))
 		if result != 0:
 			raise Exception(sdl2.SDL_GetError())
-		self.pixels = ctypes.cast(pixels, ctypes.POINTER(ctypes.c_int))
 		self.pitch = pitch.value // 4
+		self.pixels = np.ctypeslib.as_array(ctypes.cast(pixels, ctypes.POINTER(ctypes.c_uint)), shape=(self.pitch * self.tex_height,))
 	def __exit__(self, *params):
 		self.unlockpixels()
 	def unlockpixels(self):
@@ -127,7 +129,9 @@ class display:
 		if w is None or h is None:
 			size = self.size
 		o_rect = sdl2.SDL_Rect(x, y, size[0] if w is None else w, size[1] if h is None else h)
-		sdl2.SDL_RenderCopy(self.renderer, self.texture, ctypes.cast(0, ctypes.POINTER(sdl2.SDL_Rect)), o_rect)#ctypes.cast(0, ctypes.POINTER(sdl2.SDL_Rect)))
+		result = sdl2.SDL_RenderCopy(self.renderer, self.texture, ctypes.cast(0, ctypes.POINTER(sdl2.SDL_Rect)), o_rect)#ctypes.cast(0, ctypes.POINTER(sdl2.SDL_Rect)))
+		if result != 0:
+			raise Exception(sdl2.SDL_GetError())
 	def __del__(self):
 		sdl2.ext.quit()
 
@@ -137,11 +141,13 @@ class display:
 		maxlength = dataset.maxlength
 		texlength = min(maxlength, self.max_tex_length)
 		texheight = min(len(itemnames), self.max_tex_height)
-		if self.tex_width != texlength or self.tex_height != texheight:
+		if self.tex_width != texlength or self.tex_height != texheight or (self.tex_width < maxlength and self.tex_height > 1):
 			while True:
 				try:
 					self.tex_width = texlength
 					self.tex_height = texheight
+					if self.tex_width < maxlength and self.tex_height > 1:
+						self.tex_height = 1
 					self.texture = sdl2.SDL_CreateTexture(self.renderer, sdl2.SDL_PIXELFORMAT_RGB888, sdl2.SDL_TEXTUREACCESS_STREAMING, self.tex_width, self.tex_height)
 					if not self.texture:
 						raise Exception(sdl2.SDL_GetError())
@@ -162,37 +168,96 @@ class display:
 		# first 1d is tiled by texlength for each row
 		# then 2d is tiled by texheight using groups of rows
 		#todotodo below here
-		row = 0
-		while row < height and row < len(itemnames):
-			startrow = row
-			with self:
-				pxoff = 0
-				for texrow in range(self.tex_height):
-					while True:
-						if row >= height or row >= len(itemnames):
-							break
-						item = dataset.load(itemnames[row])
-						if item.length == 0:
-							row += 1
-						else:
-							break
-					texcol = 0
-					while texcol < len(item):
-						c64data = item.read(self.tex_width)
-			#pxoff = self.pitch * row
-			#pxdata = self.pixels[pxoff:pxoff+len(c64data)]
-			#dstwidth = int(len(c64data) * width / maxlength + 0.5)
-						tail = texcol + len(c64data)
-						self.pixels[pxoff + texcol:pxoff + tail] = c64data.real * 0xff + c64data.imag * 0xff00
-						texcol = tail
-					pxoff += self.pitch
-					row += 1
-				self.render(0, startrow, None, self.tex_height) 
-			# scale
-			# scaling basically means writing to another texture, and then drawing that texture.
-			# but we can draw straight to the renderer
 
-			# data is c64
+		'''
+		when we run it we usually encounter an error
+		due to [memorydisruptionish] issues during development.
+		parts and assumptions that were put one place,
+		but not included in another place.
+		an approach could be to look for the assumption,
+		and the place needing it included, and add it
+		to the comments.
+		'''
+
+
+		# write all texs of pixels
+		# ensure the below increments both rows and columns 
+		# loop over it until the image is complete
+		item = None
+		row = 0
+		itemcol = 0
+		screencol = 0
+		while row < height and row < len(itemnames):
+			# write tex of pixels
+			# if there are multiple rows, write other rows
+			texrow = 0
+			pxoff = 0
+
+			with self:
+				startitemcol = itemcol
+				while texrow < self.tex_height and row < len(itemnames):
+					# load item for texrow. this is conditional on the row changing
+					if item is None:
+						item = dataset.load(itemnames[row])
+
+					# write subrow of pixels
+					c64data = (item.read(offset = itemcol, size = self.tex_width) * 128 + complex(127.4, 127.4)).round()
+					# needs pxoff initialised for the tex
+					# whenever self.pixels is used, it must be locked [for the tex]
+					# this needs unsigned values. the values were signed
+					self.pixels[pxoff:pxoff + len(c64data)] = c64data.real * 0xff + c64data.imag * 0xff00 # type: wrote image instead of imag. unnatural error.
+					if len(c64data) < self.tex_width:
+						# item over
+						row += 1
+						pxoff += self.pitch
+						itemcol = 0
+						screencol = 0
+						item = None
+					else:
+						# more of this row and item
+						itemcol += self.tex_width
+						break
+
+			# blit tex of pixels
+			nextscreencol = int(startitemcol * width / maxlength)
+			self.render(screencol, row - self.tex_height, nextscreencol - screencol, self.tex_height) # when startrow changed to row, this line wasn't included
+			#sdl2.SDL_RenderPresent(self.renderer)
+			screencol = nextscreencol
+			# move on to next tex of pixels
+
+
+
+
+
+
+		#row = 0
+		#self.lockpixels()
+		#while row < height and row < len(itemnames):
+		#	item = dataset.load(itemnames[row])
+		#	if item.length == 0:
+		#		itemnames = itemnames[:row] + itemnames[row + 1:]
+		#		continue
+		#	startrow = row
+		#	col = 0
+		#	while col < self.tex_width:
+		#		pxoff = 0
+		#		texcol = 0
+		#		while texcol < len(item):
+		#			c64data = item.read(offset = texcol, size = self.tex_width)
+		#	#pxoff = self.pitch * row
+		#	#pxdata = self.pixels[pxoff:pxoff+len(c64data)]
+		#	#dstwidth = int(len(c64data) * width / maxlength + 0.5)
+		#			tail = texcol + len(c64data)
+		#			self.pixels[pxoff + texcol:pxoff + tail] = c64data.real * 0xff + c64data.imag * 0xff00
+		#			texcol = tail
+		#		pxoff += self.pitch
+		#		row += 1
+		#	self.render(0, startrow, None, self.tex_height) 
+		#	# scale
+		#	# scaling basically means writing to another texture, and then drawing that texture.
+		#	# but we can draw straight to the renderer
+
+		#	# data is c64
 			
 
 import os
