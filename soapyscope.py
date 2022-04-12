@@ -209,6 +209,7 @@ class display:
 					if len(c64data) < self.tex_width:
 						# item over
 						row += 1
+						texrow += 1
 						pxoff += self.pitch
 						itemcol = 0
 						screencol = 0
