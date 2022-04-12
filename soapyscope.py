@@ -87,7 +87,7 @@ class display:
 				break
 			except:
 				pass
-		self.window = sdl2.SDL_CreateWindow(b'Hello, world!', sdl2.SDL_WINDOWPOS_CENTERED, sdl2.SDL_WINDOWPOS_CENTERED, 800, 600, sdl2.SDL_WINDOW_SHOWN | sdl2.SDL_WINDOW_MAXIMIZED)
+		self.window = sdl2.SDL_CreateWindow(b'Hello, world!', sdl2.SDL_WINDOWPOS_CENTERED, sdl2.SDL_WINDOWPOS_CENTERED, 640, 480, sdl2.SDL_WINDOW_SHOWN | sdl2.SDL_WINDOW_MAXIMIZED)
 		self.renderer = sdl2.SDL_CreateRenderer(self.window, -1, sdl2.SDL_RENDERER_ACCELERATED)
 		self.tex_width, self.tex_height = self.size
 		self.texture = sdl2.SDL_CreateTexture(self.renderer, sdl2.SDL_PIXELFORMAT_RGB888, sdl2.SDL_TEXTUREACCESS_STREAMING, self.tex_width, self.tex_height)
@@ -205,7 +205,7 @@ class display:
 					# needs pxoff initialised for the tex
 					# whenever self.pixels is used, it must be locked [for the tex]
 					# this needs unsigned values. the values were signed
-					self.pixels[pxoff:pxoff + len(c64data)] = c64data.real * 0xff + c64data.imag * 0xff00 # type: wrote image instead of imag. unnatural error.
+					self.pixels[pxoff:pxoff + len(c64data)] = c64data.real * 0xff + c64data.imag * 0xff0000 # type: wrote image instead of imag. unnatural error.
 					if len(c64data) < self.tex_width:
 						# item over
 						row += 1
