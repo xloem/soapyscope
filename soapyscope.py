@@ -87,12 +87,15 @@ class display:
 				break
 			except:
 				pass
-		self.window = sdl2.SDL_CreateWindow(b'Hello, world!', sdl2.SDL_WINDOWPOS_CENTERED, sdl2.SDL_WINDOWPOS_CENTERED, 640, 480, sdl2.SDL_WINDOW_SHOWN | sdl2.SDL_WINDOW_MAXIMIZED)
+		self.window = sdl2.SDL_CreateWindow(b'Hello, world!', sdl2.SDL_WINDOWPOS_CENTERED, sdl2.SDL_WINDOWPOS_CENTERED, 540, 405, sdl2.SDL_WINDOW_RESIZABLE | sdl2.SDL_WINDOW_SHOWN | sdl2.SDL_WINDOW_MAXIMIZED)
 		self.renderer = sdl2.SDL_CreateRenderer(self.window, -1, sdl2.SDL_RENDERER_ACCELERATED)
+		sdl2.SDL_SetRenderDrawColor(self.renderer, 0, 255, 0, 0);
+		sdl2.SDL_RenderClear(self.renderer);
 		self.tex_width, self.tex_height = self.size
 		self.texture = sdl2.SDL_CreateTexture(self.renderer, sdl2.SDL_PIXELFORMAT_RGB888, sdl2.SDL_TEXTUREACCESS_STREAMING, self.tex_width, self.tex_height)
 		if not self.texture:
 			raise Exception(sdl2.SDL_GetError())
+		sdl2.SDL_SetTextureBlendMode(self.texture, sdl2.SDL_BLENDMODE_NONE)
 		self.pixels = None
 		self.max_tex_length = 16384
 		self.max_tex_height = 16384
@@ -122,6 +125,9 @@ class display:
 		for event in events:
 			if event.type == sdl2.SDL_QUIT:
 				raise Exception('SDL_QUIT')
+			elif event.type == sdl2.SDL_MOUSEMOTION:
+				motion = event.motion
+				print(motion.x, motion.y)
 		#for x in range(self.size[1] * pitch.value // 4 // 2):
 		#	pixels[x] = 0xff#ffffff
 		sdl2.SDL_RenderPresent(self.renderer)
@@ -151,6 +157,7 @@ class display:
 					self.texture = sdl2.SDL_CreateTexture(self.renderer, sdl2.SDL_PIXELFORMAT_RGB888, sdl2.SDL_TEXTUREACCESS_STREAMING, self.tex_width, self.tex_height)
 					if not self.texture:
 						raise Exception(sdl2.SDL_GetError())
+					sdl2.SDL_SetTextureBlendMode(self.texture, sdl2.SDL_BLENDMODE_NONE)
 					break
 				except:
 					if self.tex_height > 1:
@@ -184,35 +191,38 @@ class display:
 		# ensure the below increments both rows and columns 
 		# loop over it until the image is complete
 		item = None
-		row = 0
+		itemrow = 0
 		itemcol = 0
+		screenrow = 0
 		screencol = 0
-		while row < height and row < len(itemnames):
+		while itemrow < len(itemnames):
 			# write tex of pixels
 			# if there are multiple rows, write other rows
 			texrow = 0
 			pxoff = 0
 
 			with self:
+				startitemrow = itemrow
 				startitemcol = itemcol
-				while texrow < self.tex_height and row < len(itemnames):
+				while itemrow < len(itemnames) and texrow < self.tex_height:
 					# load item for texrow. this is conditional on the row changing
 					if item is None:
-						item = dataset.load(itemnames[row])
+						item = dataset.load(itemnames[itemrow])
+						itemrow += 1
+						itemcol = 0
+						screencol = 0
 
 					# write subrow of pixels
 					c64data = (item.read(offset = itemcol, size = self.tex_width) * 128 + complex(127.4, 127.4)).round()
 					# needs pxoff initialised for the tex
 					# whenever self.pixels is used, it must be locked [for the tex]
 					# this needs unsigned values. the values were signed
-					self.pixels[pxoff:pxoff + len(c64data)] = c64data.real * 0xff + c64data.imag * 0xff0000 # type: wrote image instead of imag. unnatural error.
+					self.pixels[pxoff:pxoff + len(c64data)] = c64data.real + c64data.imag * 0x10000 # type: wrote image instead of imag. unnatural error.
+					#print(len(c64data))
 					if len(c64data) < self.tex_width:
 						# item over
-						row += 1
 						texrow += 1
 						pxoff += self.pitch
-						itemcol = 0
-						screencol = 0
 						item = None
 					else:
 						# more of this row and item
@@ -220,16 +230,14 @@ class display:
 						break
 
 			# blit tex of pixels
-			nextscreencol = int(startitemcol * width / maxlength)
-			self.render(screencol, row - self.tex_height, nextscreencol - screencol, self.tex_height) # when startrow changed to row, this line wasn't included
+			nextscreenrow = int(itemrow * height / len(itemnames))
+			nextscreencol = int(itemcol * width / maxlength)
+			#print('orect:', screencol, screenrow, '->', nextscreencol, nextscreenrow)
+			self.render(screencol, screenrow, nextscreencol - screencol, nextscreenrow - screenrow) # when startrow changed to row, this line wasn't included
 			#sdl2.SDL_RenderPresent(self.renderer)
+			screenrow = nextscreenrow
 			screencol = nextscreencol
 			# move on to next tex of pixels
-
-
-
-
-
 
 		#row = 0
 		#self.lockpixels()
